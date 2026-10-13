@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { amCreateCooldownIndex, amTeachLearn } from './amMatchScore.js';
+import { AM_MATCH_CONFIG, amCreateCooldownIndex, amTeachLearn } from './amMatchScore.js';
 import {
   amAllMembersEngaged,
   amAllWeakCovered,
@@ -157,7 +157,7 @@ describe('Study Peers shared strengths', () => {
       now: NOW,
       blockSet: new Set(),
       cooldowns: legacy.amCreateCooldownIndex([]),
-    });
+    }, AM_MATCH_CONFIG);
     expect(live.some((p) => p.mode === 'peers')).toBe(true);
     for (const p of live) for (const m of p.members) expect(m.practice).toEqual([]);
     const strip = (plan) =>

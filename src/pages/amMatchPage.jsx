@@ -16,7 +16,7 @@ import { AmRadar } from '../components/amRadar.jsx';
 import { AmPreviewCard } from '../components/amPreviewCard.jsx';
 import { AmSwitch } from '../components/amField.jsx';
 import { amToast } from '../components/amToast.jsx';
-import { amJoinNames } from '../../shared/amMatchScore.js';
+import { AM_MATCH_CONFIG, amJoinNames } from '../../shared/amMatchScore.js';
 
 const AM_MODES = [
   { id: 'buddy', title: 'Study Buddy', line: '1-on-1', icon: UserRound, blurb: 'A focused two-way swap with one partner.' },
@@ -139,7 +139,7 @@ export default function AmMatchPage() {
                   <p className="mt-1 max-w-full text-sm text-balance break-words text-slate-400" aria-live="polite">
                     {q.waiting > 1 ? q.waiting + ' students searching right now' : 'Hang tight, this usually takes a few seconds'} · {searchSeconds}s
                   </p>
-                  {searchSeconds >= 30 && mode === 'buddy' ? (
+                  {searchSeconds >= AM_MATCH_CONFIG.relaxAfterMs / 1000 && mode === 'buddy' ? (
                     <p className="mt-2 text-xs text-balance text-brand-cyan">Widening the search to one-way matches too…</p>
                   ) : null}
                   <AmButton variant="secondary" icon={X} className={'mt-6 w-full sm:w-auto sm:min-w-40 ' + AM_CLEAR_TABBAR} onClick={() => q.leave()}>

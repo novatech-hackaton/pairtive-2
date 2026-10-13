@@ -2,6 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { amCreateCall } from './amDaily.js';
 import { amApi } from './amApi.js';
 
+function amTrackFromParticipant(participant, kind, legacyKey) {
+  const descriptor = participant.tracks?.[kind];
+  return descriptor?.persistentTrack || descriptor?.track || participant[legacyKey] || null;
+}
+
+function amTrackIsOn(participant, kind, track, legacyKey) {
+  const state = participant.tracks?.[kind]?.state;
+  if (state) return state === 'playable' || state === 'loading' || state === 'sendable';
+  if (typeof participant[legacyKey] === 'boolean') return participant[legacyKey];
+  return Boolean(track);
+}
+
 /**
  * Joins a Daily room and exposes participants as simple tiles for AmVideoGrid,
  * plus local media toggles, screen share and app-message signaling (recording consent).
@@ -19,19 +31,24 @@ export function useAmDailyCall({ sessionId, selfName, onAppMessage }) {
 
   const toTiles = useCallback((call) => {
     const raw = call.participants();
-    return Object.values(raw).map((p) => ({
-      id: p.local ? 'local' : p.session_id,
-      sessionId: p.session_id,
-      userId: p.user_id || null,
-      name: p.user_name || 'Guest',
-      isLocal: p.local,
-      camOn: p.video,
-      micOn: p.audio,
-      screenOn: !!p.screenVideoTrack,
-      videoTrack: p.videoTrack || null,
-      audioTrack: p.audioTrack || null,
-      screenTrack: p.screenVideoTrack || null,
-    }));
+    return Object.values(raw).map((p) => {
+      const videoTrack = amTrackFromParticipant(p, 'video', 'videoTrack');
+      const audioTrack = amTrackFromParticipant(p, 'audio', 'audioTrack');
+      const screenTrack = amTrackFromParticipant(p, 'screenVideo', 'screenVideoTrack');
+      return {
+        id: p.local ? 'local' : p.session_id,
+        sessionId: p.session_id,
+        userId: p.user_id || null,
+        name: p.user_name || 'Guest',
+        isLocal: p.local,
+        camOn: amTrackIsOn(p, 'video', videoTrack, 'video'),
+        micOn: amTrackIsOn(p, 'audio', audioTrack, 'audio'),
+        screenOn: amTrackIsOn(p, 'screenVideo', screenTrack, 'screenVideoTrack'),
+        videoTrack,
+        audioTrack,
+        screenTrack,
+      };
+    });
   }, []);
 
   useEffect(() => {
@@ -55,7 +72,8 @@ export function useAmDailyCall({ sessionId, selfName, onAppMessage }) {
           .on('participant-left', refresh)
           .on('track-started', refresh)
           .on('track-stopped', refresh)
-          .on('error', (e) => setError(e?.errorMsg || 'Call error'))
+          .on('error', (e) => setError(e?.errorMsg || e?.message || 'Call error'))
+          .on('left-meeting', () => setJoined(false))
           .on('app-message', (ev) => msgRef.current?.(ev.data, ev.fromId));
         await call.join({ url, token });
         setMicOn(call.localAudio());

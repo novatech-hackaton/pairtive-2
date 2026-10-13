@@ -54,7 +54,7 @@ describe('scoring', () => {
     expect(best.result.twoWay).toBe(true);
   });
 
-  it('one-way matches are only allowed after 30s of waiting', () => {
+  it('one-way matches are only allowed after the configured wait', () => {
     const fresh = amMakeUser({ weak: ['Math'], strong: ['English'], joinedAt: NOW - 5_000 });
     const oneWay = amMakeUser({ weak: ['Science'], strong: ['Math'], joinedAt: NOW - 5_000 });
     expect(amScoreCandidate(fresh, oneWay, ctx())).toBeNull();
@@ -122,7 +122,7 @@ describe('hard filters', () => {
   });
 });
 
-describe('cooldowns', () => {
+describe('repeat matching', () => {
   const session = (ids, minsAgo, status = 'accepted', accepted = true) => ({
     id: `p${Math.random()}`,
     createdAt: NOW - minsAgo * 60_000,
@@ -136,32 +136,28 @@ describe('cooldowns', () => {
     members: ids.map((userId, i) => ({ userId, accepted: i === 0 })),
   });
 
-  it('never blocks the same pair after a real session (unlimited rematching)', () => {
+  it('never blocks the same pair after any proposal history', () => {
+    const history = [
+      session(['a', 'b'], 60),
+      declined(['a', 'b'], 30),
+      { ...declined(['a', 'b'], 1), status: 'expired' },
+    ];
     for (const mode of ['buddy', 'peers']) {
-      const cooldowns = amCreateCooldownIndex([session(['a', 'b'], 60), session(['a', 'b'], 30), session(['a', 'b'], 1)]);
+      const cooldowns = amCreateCooldownIndex(history);
       expect(cooldowns.inPairCooldown('a', 'b', NOW, mode)).toBe(false);
     }
-    // A decline still blocks for 24h.
-    expect(amCreateCooldownIndex([declined(['a', 'b'], 60)]).inPairCooldown('a', 'b', NOW)).toBe(true);
-    expect(amCreateCooldownIndex([declined(['a', 'b'], 25 * 60)]).inPairCooldown('a', 'b', NOW)).toBe(false);
+    expect(amCreateCooldownIndex(history).matchesSince('a', NOW - 60_000)).toBe(0);
   });
 
-  it('decline cooldown lifts after both users had 5 other matches', () => {
-    const hist = [declined(['a', 'b'], 120)];
-    for (let i = 0; i < 5; i++) hist.push(session(['a', `x${i}`], 100 - i), session(['b', `y${i}`], 100 - i));
-    expect(amCreateCooldownIndex(hist).inPairCooldown('a', 'b', NOW)).toBe(false);
-    const partial = hist.filter((p) => !p.members.some((m) => m.userId.startsWith('y')));
-    expect(amCreateCooldownIndex(partial).inPairCooldown('a', 'b', NOW)).toBe(true);
+  it('history never removes a compatible buddy candidate', () => {
+    const a = amMakeUser({ id: 'a' });
+    const b = amMakeUser({ id: 'b', weak: ['English'], strong: ['Math'] });
+    const history = [declined(['a', 'b'], 5)];
+    const cooldowns = amCreateCooldownIndex(history);
+    expect(amBestBuddy(a, [b], ctx({ cooldowns }))?.user.id).toBe('b');
   });
 
-  it('declines and timeouts put the pair in cooldown', () => {
-    const p = { ...session(['a', 'b'], 1, 'declined'), members: [{ userId: 'a', accepted: true }, { userId: 'b', accepted: false }] };
-    expect(amCreateCooldownIndex([p]).inPairCooldown('a', 'b', NOW)).toBe(true);
-    const expired = { ...p, status: 'expired', members: [{ userId: 'a', accepted: true }, { userId: 'b', accepted: null }] };
-    expect(amCreateCooldownIndex([expired]).inPairCooldown('a', 'b', NOW)).toBe(true);
-  });
-
-  it('peers: a decliner only cools down with others, not acceptors with each other', () => {
+  it('history never removes a compatible peer group', () => {
     const p = {
       ...session(['a', 'b', 'c'], 1, 'declined'),
       mode: 'peers',
@@ -169,22 +165,8 @@ describe('cooldowns', () => {
     };
     const cd = amCreateCooldownIndex([p]);
     expect(cd.inPairCooldown('a', 'b', NOW, 'peers')).toBe(false);
-    expect(cd.inPairCooldown('a', 'c', NOW, 'peers')).toBe(true);
-  });
-
-  it('excluded from best buddy only after a decline, not after a session', () => {
-    const a = amMakeUser({ id: 'a' });
-    const b = amMakeUser({ id: 'b', weak: ['English'], strong: ['Math'] });
-    expect(amBestBuddy(a, [b], ctx({ cooldowns: amCreateCooldownIndex([declined(['a', 'b'], 5)]) }))).toBeNull();
-    expect(amBestBuddy(a, [b], ctx({ cooldowns: amCreateCooldownIndex([session(['a', 'b'], 5)]) }))?.user.id).toBe('b');
-  });
-
-  it('a pair with an accepted session 5 minutes ago is matched again', () => {
-    const a = amMakeUser({ id: 'a' });
-    const b = amMakeUser({ id: 'b', weak: ['English'], strong: ['Math'] });
-    const cooldowns = amCreateCooldownIndex([session(['a', 'b'], 5)]);
-    expect(amHardFilter(a, b, ctx({ cooldowns })).ok).toBe(true);
-    expect(amBestBuddy(a, [b], ctx({ cooldowns }))?.user.id).toBe('b');
+    expect(cd.inPairCooldown('a', 'c', NOW, 'peers')).toBe(false);
+    expect(cd.groupInCooldown(['a', 'b', 'c'], NOW)).toBe(false);
   });
 
   it('group rule: accepted history never puts a group in cooldown', () => {
@@ -261,7 +243,7 @@ describe('shared-strong matching', () => {
       expect(amSharedStrong(a, b)).toEqual([]);
       expect(amHardFilter(a, b, ctx())).toEqual(amLegacy.amHardFilter(a, b, lctx(ctx())));
       const live = amScoreCandidate(a, b, ctx());
-      const legacy = amLegacy.amScoreCandidate(a, b, lctx(ctx()));
+      const legacy = amLegacy.amScoreCandidate(a, b, lctx(ctx()), AM_MATCH_CONFIG);
       if (legacy === null) expect(live).toBeNull();
       else {
         expect(live.score).toBe(legacy.score);
@@ -359,9 +341,7 @@ describe('Property 13: empty overlap preserves legacy behavior', () => {
         ),
       );
 
-  // Proposal history: mixed statuses, acceptance flags and ages (some older than the 24h cooldown).
-  // 'accepted' is excluded on purpose: unlimited rematching intentionally diverges from the frozen
-  // legacy oracle (accepted sessions no longer block). Decline/expire/pending behavior is unchanged.
+  // History is generated to ensure it remains harmless to matching decisions.
   const historyArb = (ids) =>
     fc.array(
       fc.record({
@@ -382,9 +362,9 @@ describe('Property 13: empty overlap preserves legacy behavior', () => {
       })),
     );
 
-  const ctxPair = (blocks, history) => ({
-    live: { now: NOW, blockSet: amBuildBlockSet(blocks), cooldowns: amCreateCooldownIndex(history) },
-    legacy: { now: NOW, blockSet: amLegacy.amBuildBlockSet(blocks), cooldowns: amLegacy.amCreateCooldownIndex(history) },
+  const ctxPair = (blocks) => ({
+    live: { now: NOW, blockSet: amBuildBlockSet(blocks), cooldowns: amCreateCooldownIndex() },
+    legacy: { now: NOW, blockSet: amLegacy.amBuildBlockSet(blocks), cooldowns: amLegacy.amCreateCooldownIndex([]) },
   });
 
   it('amHardFilter and amScoreCandidate match the legacy matcher for pairs with no shared strong labels', () => {
@@ -413,7 +393,7 @@ describe('Property 13: empty overlap preserves legacy behavior', () => {
 
           for (const [s, c] of [[a, b], [b, a]]) {
             const got = amScoreCandidate(s, c, live);
-            const want = amLegacy.amScoreCandidate(s, c, legacy);
+            const want = amLegacy.amScoreCandidate(s, c, legacy, AM_MATCH_CONFIG);
             if (want === null) {
               expect(got).toBeNull();
             } else {
@@ -474,7 +454,7 @@ describe('Property 13: empty overlap preserves legacy behavior', () => {
 
         const { live, legacy } = ctxPair(blocks, history);
         const got = amPlanMatches(users, live);
-        const want = amLegacy.amPlanMatches(users, legacy);
+        const want = amLegacy.amPlanMatches(users, legacy, AM_MATCH_CONFIG);
 
         for (const p of got) for (const m of p.members) expect(m.practice).toEqual([]);
         const stripped = got.map((p) => ({

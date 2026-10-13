@@ -12,6 +12,7 @@ export function amFakeAdmin(tables = {}, storage = {}) {
     let countMode = null;
     let head = false;
     const rows = () => (db[table] ??= []).filter((r) => filters.every((f) => f(r)));
+    let upsertOptions = {};
     const api = {
       // `select(cols, { count: 'exact', head: true })` mirrors supabase-js: head queries
       // resolve `{ count, data: null }`, otherwise `count` is returned alongside `data`.
@@ -23,6 +24,12 @@ export function amFakeAdmin(tables = {}, storage = {}) {
       insert(p) {
         op = 'insert';
         payload = p;
+        return api;
+      },
+      upsert(p, opts = {}) {
+        op = 'upsert';
+        payload = p;
+        upsertOptions = opts;
         return api;
       },
       update(p) {
@@ -78,6 +85,26 @@ export function amFakeAdmin(tables = {}, storage = {}) {
             db[table].push(...list.map((r) => ({ ...r })));
             calls.inserts.push({ table, rows: list });
             data = list;
+          } else if (op === 'upsert') {
+            const list = Array.isArray(payload) ? payload : [payload];
+            db[table] ??= [];
+            const conflictKeys = String(upsertOptions.onConflict || '')
+              .split(',')
+              .map((key) => key.trim())
+              .filter(Boolean);
+            data = list.map((row) => {
+              const existing = conflictKeys.length
+                ? db[table].find((item) => conflictKeys.every((key) => item[key] === row[key]))
+                : undefined;
+              if (existing) {
+                if (!upsertOptions.ignoreDuplicates) Object.assign(existing, row);
+                return existing;
+              }
+              const copy = { ...row };
+              db[table].push(copy);
+              return copy;
+            });
+            calls.inserts.push({ table, rows: list, upsert: true });
           } else if (op === 'update') {
             const hit = rows();
             hit.forEach((r) => Object.assign(r, payload));

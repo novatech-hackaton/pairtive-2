@@ -4,11 +4,13 @@ import { amIssueSessionToken } from '../api/amSessionToken.js';
 import { amEnforce, amScoreReport } from '../api/amReportVerify.js';
 import { AM_PREDICT_MAX_BYTES, amCreatePredictHandler } from '../api/amPredict.js';
 import { amCreateMatchHandler } from '../api/amMatch.js';
+import { amFromProposal } from '../api/amStartSession.js';
 import { amBktParamsFor, amBktPredict } from '../shared/amBkt.js';
 import { AmHttpError, amHandler, amRequireUser } from '../server/amServer.js';
 import { amFakeAdmin } from './amFakeAdmin.js';
 
 const S = '11111111-1111-4111-8111-111111111111';
+const P = '22222222-2222-4222-8222-222222222222';
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -70,6 +72,30 @@ describe('amSessionToken', () => {
     const t2 = tables();
     t2.profiles[0] = { id: A, name: 'Ana', status: 'suspended', suspended_until: new Date(Date.now() + 3600e3).toISOString() };
     await expect(amIssueSessionToken(amFakeAdmin(t2), A, S, vi.fn())).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('amStartSession', () => {
+  it('repairs session membership when a concurrent request already created the session', async () => {
+    const admin = amFakeAdmin({
+      match_proposals: [{ id: P, mode: 'buddy', status: 'accepted' }],
+      proposal_members: [
+        { proposal_id: P, user_id: A, teach_subjects: ['Math'], learn_subjects: ['English'] },
+        { proposal_id: P, user_id: B, teach_subjects: ['English'], learn_subjects: ['Math'] },
+      ],
+      sessions: [{ id: S, proposal_id: P, daily_room_name: 'pt-p', daily_room_url: 'https://x.daily.co/pt-p', ended_at: null }],
+      session_members: [{ session_id: S, user_id: A, teach_subjects: ['Math'], learn_subjects: ['English'] }],
+    });
+    const ensureRoom = vi.fn();
+
+    await expect(amFromProposal(admin, A, P, ensureRoom)).resolves.toBe(S);
+    expect(ensureRoom).not.toHaveBeenCalled();
+    expect(admin.db.session_members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ session_id: S, user_id: A }),
+        expect.objectContaining({ session_id: S, user_id: B, teach_subjects: ['English'], learn_subjects: ['Math'] }),
+      ]),
+    );
   });
 });
 

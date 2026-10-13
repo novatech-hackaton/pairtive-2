@@ -1,4 +1,4 @@
-// Pairtive AI matching core: hard filters, scoring, cooldowns and copy.
+// Pairtive AI matching core: hard filters, scoring and copy.
 // Pure JS (no I/O) so the API, scripts and tests share a single source of truth.
 
 import { amSchoolKey } from './amSubjects.js';
@@ -13,11 +13,8 @@ export const AM_MATCH_CONFIG = Object.freeze({
   successPriorWeight: 5,
   // Timing
   staleMs: 30_000, // heartbeat older than this = not waiting anymore
-  relaxAfterMs: 30_000, // one-way matches allowed after this much waiting
-  waitFullMs: 60_000, // wait component reaches 1.0 at this wait time
-  // Decline / timeout cooldown only: accepted sessions never block a rematch (unlimited rematching).
-  cooldownMs: 24 * 60 * 60 * 1000,
-  cooldownMatches: 5, // ...or until both users had this many other matches
+  relaxAfterMs: 10_000, // one-way matches allowed after this much waiting
+  waitFullMs: 30_000, // wait component reaches 1.0 at this wait time
   // Group sizes
   buddySize: 2,
   peersMin: 3,
@@ -109,58 +106,18 @@ export function amSchoolOk(a, b) {
 }
 
 /**
- * Cooldown index built from recent proposals (= matches).
- * history: [{ id, createdAt, status, mode, members: [{ userId, accepted }] }]
- * - Any proposal that was declined / expired puts every pair involving a non-acceptor in cooldown.
- * - Accepted proposals (real sessions) never block: people who studied together can be
- *   matched again right away, in both Study Buddy and Study Peers (unlimited rematching).
- *   They still count as "other matches" when lifting a decline cooldown.
- * - Cooldown lifts after 24h OR once both users had `cooldownMatches` other matches since.
+ * Match history is intentionally non-blocking. Users can meet the same person again
+ * after accepting, declining or timing out; explicit blocks remain enforced by
+ * `amHardFilter`.
+ *
+ * Keep this compatibility-shaped object because the planner receives it through its
+ * context and callers may still pass historical proposal data while upgrading.
  */
-export function amCreateCooldownIndex(history = [], cfg = AM_MATCH_CONFIG) {
-  const proposals = history
-    .map((p) => ({ ...p, createdAt: toMs(p.createdAt ?? p.created_at) }))
-    .sort((a, b) => a.createdAt - b.createdAt);
-  const byUser = new Map();
-  for (const p of proposals) {
-    for (const m of p.members) {
-      if (!byUser.has(m.userId)) byUser.set(m.userId, []);
-      byUser.get(m.userId).push(p.createdAt);
-    }
-  }
-
-  const matchesSince = (userId, t) => (byUser.get(userId) ?? []).filter((x) => x > t).length;
-  const lifted = (ids, t, now) =>
-    now - t >= cfg.cooldownMs || ids.every((id) => matchesSince(id, t) >= cfg.cooldownMatches);
-
-  function pairBlockingProposal(p, a, b) {
-    const ma = p.members.find((m) => m.userId === a);
-    const mb = p.members.find((m) => m.userId === b);
-    if (!ma || !mb) return false;
-    // Accepted = a real session together: never blocks a rematch.
-    if (p.status === 'accepted' || p.status === 'pending') return false;
-    // declined / expired: cooldown when either of the two did not accept
-    return ma.accepted !== true || mb.accepted !== true;
-  }
-
+export function amCreateCooldownIndex() {
   return {
-    matchesSince,
-    // `mode` is kept for call-site compatibility; the rule is the same for both modes now.
-    // eslint-disable-next-line no-unused-vars
-    inPairCooldown(a, b, now, mode = AM_MODES.buddy) {
-      for (let i = proposals.length - 1; i >= 0; i--) {
-        const p = proposals[i];
-        if (now - p.createdAt >= cfg.cooldownMs) break;
-        if (pairBlockingProposal(p, a, b) && !lifted([a, b], p.createdAt, now)) return true;
-      }
-      return false;
-    },
-    // Study Peers group rule used to block groups where >= half already shared a session.
-    // Accepted history no longer blocks, so this is always false (kept for callers).
-    // eslint-disable-next-line no-unused-vars
-    groupInCooldown(ids, now) {
-      return false;
-    },
+    matchesSince: () => 0,
+    inPairCooldown: () => false,
+    groupInCooldown: () => false,
   };
 }
 

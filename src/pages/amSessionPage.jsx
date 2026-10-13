@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { useNavigate, useParams } from 'react-router-dom';
 import { CircleDot, Loader2 } from 'lucide-react';
 import { useAmAuth } from '../lib/amAuth.jsx';
-import { amSupabase } from '../lib/amSupabase.js';
+import { amSupabase, amFriendlyError } from '../lib/amSupabase.js';
 import { amStopLocalStream } from '../lib/amMedia.js';
 import { amDailyScreenSupported } from '../lib/amDaily.js';
 import { useAmDailyCall } from '../lib/amDailyCall.js';
@@ -31,6 +31,7 @@ export default function AmSessionPage() {
 
   const [session, setSession] = useState(null);
   const [members, setMembers] = useState([]);
+  const [loadError, setLoadError] = useState('');
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState('chat');
   const [reportTarget, setReportTarget] = useState(null);
@@ -60,26 +61,36 @@ export default function AmSessionPage() {
   useEffect(() => {
     let active = true;
     (async () => {
-      const { data: s } = await amSupabase.from('sessions').select('*').eq('id', sessionId).maybeSingle();
-      const { data: m } = await amSupabase.from('session_members').select('user_id, teach_subjects, learn_subjects').eq('session_id', sessionId);
-      if (!active) return;
-      if (!s) {
-        amToast.error('This session is no longer available.');
-        navigate('/home', { replace: true });
-        return;
-      }
-      setSession(s);
-      const ids = (m ?? []).map((x) => x.user_id);
-      const { data: profs } = await amSupabase.from('profiles').select('id, name, avatar_url').in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
-      const byId = Object.fromEntries((profs ?? []).map((p) => [p.id, p]));
-      setMembers((m ?? []).map((x) => ({ ...x, ...byId[x.user_id] })));
-      await amSupabase.rpc('am_mark_joined', { p_session: sessionId });
+      try {
+        const [{ data: s, error: sessionError }, { data: m, error: membersError }] = await Promise.all([
+          amSupabase.from('sessions').select('*').eq('id', sessionId).maybeSingle(),
+          amSupabase.from('session_members').select('user_id, teach_subjects, learn_subjects').eq('session_id', sessionId),
+        ]);
+        if (sessionError) throw sessionError;
+        if (membersError) throw membersError;
+        if (!active) return;
+        if (!s) throw new Error('This session is no longer available.');
+        setSession(s);
+        const ids = (m ?? []).map((x) => x.user_id);
+        const { data: profs, error: profilesError } = await amSupabase
+          .from('profiles')
+          .select('id, name, avatar_url')
+          .in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+        if (profilesError) throw profilesError;
+        const byId = Object.fromEntries((profs ?? []).map((p) => [p.id, p]));
+        setMembers((m ?? []).map((x) => ({ ...x, ...byId[x.user_id] })));
+        const { error: joinedError } = await amSupabase.rpc('am_mark_joined', { p_session: sessionId });
+        if (joinedError) throw joinedError;
 
-      const sync = amCreateNotesSync(sessionId, user.id, { onUpdate: (text) => setNotes(text) });
-      const { data: existing } = await amSupabase.from('session_notes').select('content').eq('session_id', sessionId).maybeSingle();
-      if (existing?.content) sync.seed(existing.content);
-      setNotes(sync.getText());
-      notesSyncRef.current = sync;
+        const sync = amCreateNotesSync(sessionId, user.id, { onUpdate: (text) => setNotes(text) });
+        notesSyncRef.current = sync;
+        const { data: existing, error: notesError } = await amSupabase.from('session_notes').select('content').eq('session_id', sessionId).maybeSingle();
+        if (notesError) throw notesError;
+        if (existing?.content) sync.seed(existing.content);
+        setNotes(sync.getText());
+      } catch (e) {
+        if (active) setLoadError(amFriendlyError(e));
+      }
     })();
     return () => {
       active = false;
@@ -222,13 +233,13 @@ export default function AmSessionPage() {
 
   const requesterName = members.find((m) => m.user_id === recState.requesterId)?.name;
 
-  if (call.error) {
+  if (loadError || call.error) {
     return (
       <div className="grid min-h-dvh place-items-center p-6 text-center">
         <div>
           <AmLogo className="mb-6 justify-center" />
           <p className="text-lg font-semibold text-white">We couldn\u2019t connect you to the call</p>
-          <p className="mt-1 text-slate-400">{call.error}</p>
+          <p className="mt-1 text-slate-400">{loadError || call.error}</p>
           <button onClick={() => endAndGo('home')} className="mt-6 rounded-xl bg-brand px-5 py-2.5 font-medium text-white">Back to home</button>
         </div>
       </div>

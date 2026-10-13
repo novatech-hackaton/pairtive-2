@@ -23,22 +23,6 @@ async function amRequireDiagnostic(admin, userId) {
   throw new AmHttpError(403, 'Take the diagnostic before matching.', { reason: 'diagnostic-required' });
 }
 
-async function amLoadHistory(admin, userIds, since) {
-  const { data, error } = await admin
-    .from('proposal_members')
-    .select('proposal_id, user_id, accepted, match_proposals!inner(id, created_at, status, mode)')
-    .in('user_id', userIds)
-    .gte('match_proposals.created_at', since);
-  amDbError(error);
-  const byId = new Map();
-  for (const row of data ?? []) {
-    const p = row.match_proposals;
-    if (!byId.has(p.id)) byId.set(p.id, { id: p.id, createdAt: p.created_at, status: p.status, mode: p.mode, members: [] });
-    byId.get(p.id).members.push({ userId: row.user_id, accepted: row.accepted });
-  }
-  return [...byId.values()];
-}
-
 async function amRunMatcher(admin, mode) {
   const freshSince = new Date(Date.now() - AM_MATCH_CONFIG.staleMs).toISOString();
   const { data: queue, error } = await admin
@@ -53,10 +37,9 @@ async function amRunMatcher(admin, mode) {
   if (!queue || queue.length < 2) return { waiting: queue?.length ?? 0 };
 
   const ids = queue.map((q) => q.user_id);
-  const [profilesRes, blocksRes, history] = await Promise.all([
+  const [profilesRes, blocksRes] = await Promise.all([
     admin.from('profiles').select(PROFILE_FIELDS).in('id', ids),
     admin.from('blocks').select('blocker_id, blocked_id').in('blocker_id', ids).in('blocked_id', ids),
-    amLoadHistory(admin, ids, new Date(Date.now() - AM_MATCH_CONFIG.cooldownMs).toISOString()),
   ]);
   amDbError(profilesRes.error);
   amDbError(blocksRes.error);
@@ -70,7 +53,7 @@ async function amRunMatcher(admin, mode) {
   const ctx = {
     now: Date.now(),
     blockSet: amBuildBlockSet(blocksRes.data),
-    cooldowns: amCreateCooldownIndex(history),
+    cooldowns: amCreateCooldownIndex(),
   };
 
   const plan = amPlanMatches(users, ctx);

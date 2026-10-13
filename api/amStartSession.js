@@ -2,7 +2,7 @@
 // Idempotent: every member calls it; the first creates the Daily room + session row.
 import { AmHttpError, amAdmin, amDbError, amEnsureDailyRoom, amHandler, amIsUuid, amRequireUser } from '../server/amServer.js';
 
-async function amFromProposal(admin, userId, proposalId) {
+export async function amFromProposal(admin, userId, proposalId, ensureRoom = amEnsureDailyRoom) {
   const { data: proposal, error } = await admin
     .from('match_proposals')
     .select('id, mode, status')
@@ -18,19 +18,41 @@ async function amFromProposal(admin, userId, proposalId) {
   if (!members.some((m) => m.user_id === userId)) throw new AmHttpError(403, 'Not your match');
   if (proposal.status !== 'accepted') throw new AmHttpError(409, 'Waiting for everyone to accept');
 
-  const { data: existing } = await admin.from('sessions').select('id').eq('proposal_id', proposalId).maybeSingle();
-  if (existing) return existing.id;
-
-  const room = await amEnsureDailyRoom(`pt-${proposalId}`);
-  const { error: insErr } = await admin
+  let { data: session, error: sessionErr } = await admin
     .from('sessions')
-    .upsert(
-      { proposal_id: proposalId, mode: proposal.mode, daily_room_name: room.name, daily_room_url: room.url },
-      { onConflict: 'proposal_id', ignoreDuplicates: true },
-    );
-  amDbError(insErr);
-  const { data: session, error: sErr } = await admin.from('sessions').select('id').eq('proposal_id', proposalId).single();
-  amDbError(sErr);
+    .select('id, daily_room_name, daily_room_url, ended_at')
+    .eq('proposal_id', proposalId)
+    .maybeSingle();
+  amDbError(sessionErr);
+
+  if (!session) {
+    const room = await ensureRoom(`pt-${proposalId}`);
+    const { error: insErr } = await admin
+      .from('sessions')
+      .upsert(
+        { proposal_id: proposalId, mode: proposal.mode, daily_room_name: room.name, daily_room_url: room.url },
+        { onConflict: 'proposal_id', ignoreDuplicates: true },
+      );
+    amDbError(insErr);
+    const result = await admin
+      .from('sessions')
+      .select('id, daily_room_name, daily_room_url, ended_at')
+      .eq('proposal_id', proposalId)
+      .single();
+    amDbError(result.error);
+    session = result.data;
+  }
+  if (session.ended_at) throw new AmHttpError(410, 'That session already ended');
+
+  // A concurrent request may have created the session row but not its room fields yet.
+  if (!session.daily_room_name || !session.daily_room_url) {
+    const room = await ensureRoom(`pt-${proposalId}`);
+    const { error: repairErr } = await admin
+      .from('sessions')
+      .update({ daily_room_name: room.name, daily_room_url: room.url })
+      .eq('id', session.id);
+    amDbError(repairErr);
+  }
 
   const { error: smErr } = await admin.from('session_members').upsert(
     members.map((m) => ({

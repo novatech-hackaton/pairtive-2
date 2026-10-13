@@ -13,7 +13,7 @@ function AmTile({ participant, isLocal, onReport }) {
     if (videoRef.current) videoRef.current.srcObject = activeVideo ? new MediaStream([activeVideo]) : null;
   }, [activeVideo]);
   useEffect(() => {
-    if (audioRef.current && audioTrack && !isLocal) audioRef.current.srcObject = new MediaStream([audioTrack]);
+    if (audioRef.current) audioRef.current.srcObject = audioTrack && !isLocal ? new MediaStream([audioTrack]) : null;
   }, [audioTrack, isLocal]);
 
   return (

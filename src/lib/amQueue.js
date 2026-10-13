@@ -5,7 +5,7 @@ import { useAmInterval, useAmLatest } from './amHooks.js';
 import { useAmPostgresChanges } from './amRealtime.js';
 
 export const AM_HEARTBEAT_MS = 10_000;
-export const AM_POLL_MS = 4_000;
+export const AM_POLL_MS = 2_000;
 
 /**
  * Drives the whole matching lifecycle for one user:
@@ -54,8 +54,8 @@ export function useAmQueue(userId) {
       if (e.status === 403) {
         setError(e.message);
         setErrorReason(e.reason ?? null);
-        setPhase('error');
-      }
+      } else setError(e.message || 'Could not reach the matching service. Please try again.');
+      setPhase('error');
     } finally {
       busyRef.current = false;
     }
@@ -112,9 +112,10 @@ export function useAmQueue(userId) {
           tick();
         }
       } catch (e) {
+        startingRef.current = false;
         setMyResponse(null);
-        setError(e.message);
-        tick();
+        setError(e.message || 'Could not start the session. Please try again.');
+        setPhase('error');
       }
     },
     [proposal, tick],
@@ -129,7 +130,8 @@ export function useAmQueue(userId) {
       setSessionId(sid);
     } catch (e) {
       startingRef.current = false;
-      setError(e.message);
+      setError(e.message || 'Could not start the session. Please try again.');
+      setPhase('error');
     }
   }, [proposal, sessionId]);
 
