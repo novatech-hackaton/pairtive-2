@@ -32,11 +32,11 @@ function AmTile({ participant, isLocal, onReport }) {
         </div>
       )}
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-ink-950/80 to-transparent p-2.5">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-950/60 px-2.5 py-1 text-xs font-medium text-white backdrop-blur">
+        <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-ink-950/60 px-2.5 py-1 text-xs font-medium text-white backdrop-blur">
           {screenOn ? <MonitorUp className="size-3.5 text-brand-cyan" aria-hidden /> : null}
-          {name}{isLocal ? ' (you)' : ''}
-          {!micOn ? <MicOff className="size-3.5 text-rose-300" aria-hidden /> : null}
-          {!camOn && !screenOn ? <VideoOff className="size-3.5 text-slate-400" aria-hidden /> : null}
+          <span className="min-w-0 truncate">{name}{isLocal ? ' (you)' : ''}</span>
+          {!micOn ? <MicOff className="size-3.5 shrink-0 text-rose-300" aria-hidden /> : null}
+          {!camOn && !screenOn ? <VideoOff className="size-3.5 shrink-0 text-slate-400" aria-hidden /> : null}
         </span>
         {!isLocal && onReport ? (
           <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">

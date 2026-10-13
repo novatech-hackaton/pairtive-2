@@ -64,7 +64,7 @@ export function AmLayout({ profile, unread = 0, onSignOut, children }) {
         </div>
       </header>
 
-      <main id="am-main" className="mx-auto w-full max-w-6xl flex-1 px-4 pt-6 pb-28 sm:px-6 md:pb-12">
+      <main id="am-main" className="mx-auto min-h-0 min-w-0 w-full max-w-6xl flex-1 px-4 pt-6 pb-28 sm:px-6 md:pb-12">
         {children ?? <Outlet />}
       </main>
 

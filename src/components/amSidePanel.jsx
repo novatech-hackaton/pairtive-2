@@ -26,9 +26,9 @@ export function AmSidePanel({ isDesktop, open, tab, onTab, onClose, chat, notes,
   );
 
   const Body = (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {Tabs}
-      <div className="min-h-0 flex-1" role="tabpanel">
+      <div className="min-h-0 flex-1 overflow-hidden" role="tabpanel">
         {tab === 'chat' ? chat : notes}
       </div>
     </div>

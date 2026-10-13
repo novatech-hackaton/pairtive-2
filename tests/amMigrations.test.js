@@ -166,6 +166,17 @@ describe('sessions, ratings and threads', () => {
     await asUser(ids.cy, `select public.am_mark_joined($1)`, [ids.session]);
   });
 
+  it('grants authenticated users the browser privileges needed for ratings and chat', async () => {
+    const result = await db.query(`
+      select
+        has_table_privilege('authenticated', 'public.ratings', 'SELECT') as ratings_select,
+        has_table_privilege('authenticated', 'public.ratings', 'INSERT') as ratings_insert,
+        has_table_privilege('authenticated', 'public.messages', 'SELECT') as messages_select,
+        has_table_privilege('authenticated', 'public.messages', 'INSERT') as messages_insert
+    `);
+    expect(result.rows[0]).toEqual({ ratings_select: true, ratings_insert: true, messages_select: true, messages_insert: true });
+  });
+
   it('blocks ratings for sessions shorter than 1 minute', async () => {
     await expect(
       asUser(ids.ana, `insert into public.ratings (session_id, rater_id, ratee_id, stars) values ($1, auth.uid(), $2, 5)`, [ids.session, ids.cy]),

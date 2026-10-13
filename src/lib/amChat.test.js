@@ -1,15 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 
-const amMock = vi.hoisted(() => ({ messages: [], loadedIds: [], realtimeEnabled: [] }));
+const amMock = vi.hoisted(() => ({ messages: [], loadedIds: [], realtimeEnabled: [], inserted: null }));
 
 vi.mock('./amSupabase.js', () => {
   const messagesQuery = () => {
+    let insertPayload = null;
     const q = {
       select: () => q,
       eq: (_col, id) => (amMock.loadedIds.push(id), q),
       order: () => q,
       limit: async () => ({ data: amMock.messages, error: null }),
+      insert: (payload) => (insertPayload = payload, q),
+      single: async () => {
+        const inserted = { id: 'm2', created_at: '2024-01-01T00:01:00Z', ...insertPayload };
+        amMock.inserted = inserted;
+        return { data: inserted, error: null };
+      },
     };
     return q;
   };
@@ -17,6 +24,7 @@ vi.mock('./amSupabase.js', () => {
   return {
     amSupabase: {
       rpc: vi.fn(),
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: 'u1' } }, error: null })) },
       from: (table) => (table === 'messages' ? messagesQuery() : membersQuery()),
     },
   };
@@ -35,6 +43,8 @@ beforeEach(() => {
   amMock.messages = [msg];
   amMock.loadedIds = [];
   amMock.realtimeEnabled = [];
+  amMock.inserted = null;
+  amSupabase.auth.getUser.mockClear();
 });
 
 describe('useAmChat', () => {
@@ -90,5 +100,16 @@ describe('useAmChat', () => {
     expect(result.current.loading).toBe(false);
     expect(amMock.loadedIds).toContain('c1');
     expect(amSupabase.rpc).not.toHaveBeenCalled();
+  });
+
+  it('echoes a sent message immediately instead of waiting for realtime', async () => {
+    const { result } = renderHook(() => useAmChat({ conversationId: 'c1', sessionId: 's1' }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.send({ body: 'hello' }));
+
+    expect(amSupabase.auth.getUser).toHaveBeenCalledTimes(1);
+    expect(amMock.inserted).toMatchObject({ conversation_id: 'c1', sender_id: 'u1', session_id: 's1', body: 'hello' });
+    expect(result.current.messages.some((m) => m.id === 'm2' && m.body === 'hello')).toBe(true);
   });
 });

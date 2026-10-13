@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { amCreateCall } from './amDaily.js';
 import { amApi } from './amApi.js';
 
-function amTrackFromParticipant(participant, kind, legacyKey) {
+export function amTrackFromParticipant(participant, kind, legacyKey) {
   const descriptor = participant.tracks?.[kind];
   return descriptor?.persistentTrack || descriptor?.track || participant[legacyKey] || null;
 }
 
-function amTrackIsOn(participant, kind, track, legacyKey) {
+export function amTrackIsOn(participant, kind, track, legacyKey) {
   const state = participant.tracks?.[kind]?.state;
   if (state) return state === 'playable' || state === 'loading' || state === 'sendable';
+  if (participant.local && typeof track?.enabled === 'boolean') return track.enabled;
   if (typeof participant[legacyKey] === 'boolean') return participant[legacyKey];
   return Boolean(track);
 }
@@ -35,6 +36,7 @@ export function useAmDailyCall({ sessionId, selfName, onAppMessage }) {
       const videoTrack = amTrackFromParticipant(p, 'video', 'videoTrack');
       const audioTrack = amTrackFromParticipant(p, 'audio', 'audioTrack');
       const screenTrack = amTrackFromParticipant(p, 'screenVideo', 'screenVideoTrack');
+      const localMicOn = p.local && typeof call.localAudio === 'function' ? call.localAudio() : null;
       return {
         id: p.local ? 'local' : p.session_id,
         sessionId: p.session_id,
@@ -42,7 +44,7 @@ export function useAmDailyCall({ sessionId, selfName, onAppMessage }) {
         name: p.user_name || 'Guest',
         isLocal: p.local,
         camOn: amTrackIsOn(p, 'video', videoTrack, 'video'),
-        micOn: amTrackIsOn(p, 'audio', audioTrack, 'audio'),
+        micOn: localMicOn == null ? amTrackIsOn(p, 'audio', audioTrack, 'audio') : localMicOn,
         screenOn: amTrackIsOn(p, 'screenVideo', screenTrack, 'screenVideoTrack'),
         videoTrack,
         audioTrack,
@@ -78,6 +80,7 @@ export function useAmDailyCall({ sessionId, selfName, onAppMessage }) {
         await call.join({ url, token });
         setMicOn(call.localAudio());
         setCamOn(call.localVideo());
+        refresh();
       } catch (e) {
         if (!cancelled) setError(e.message || 'Could not join the call');
       }
@@ -96,15 +99,19 @@ export function useAmDailyCall({ sessionId, selfName, onAppMessage }) {
 
   const toggleMic = useCallback(() => {
     const call = callRef.current;
+    if (!call) return;
     const next = !call.localAudio();
     call.setLocalAudio(next);
     setMicOn(next);
+    setParticipants((current) => current.map((p) => (p.isLocal ? { ...p, micOn: next } : p)));
   }, []);
   const toggleCam = useCallback(() => {
     const call = callRef.current;
+    if (!call) return;
     const next = !call.localVideo();
     call.setLocalVideo(next);
     setCamOn(next);
+    setParticipants((current) => current.map((p) => (p.isLocal ? { ...p, camOn: next } : p)));
   }, []);
   const toggleScreen = useCallback(async () => {
     const call = callRef.current;

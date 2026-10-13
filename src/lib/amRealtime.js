@@ -8,8 +8,9 @@ let amChannelSeq = 0;
  * Subscribe to postgres_changes. RLS decides which rows the user receives.
  * specs: [{ event, table, filter }]
  */
-export function useAmPostgresChanges(key, specs, onChange, enabled = true) {
+export function useAmPostgresChanges(key, specs, onChange, enabled = true, onStatus) {
   const handler = useAmLatest(onChange);
+  const statusHandler = useAmLatest(onStatus);
   const specsKey = JSON.stringify(specs);
   useEffect(() => {
     if (!enabled || !amSupabase) return undefined;
@@ -19,11 +20,13 @@ export function useAmPostgresChanges(key, specs, onChange, enabled = true) {
         handler.current(payload),
       );
     }
-    channel.subscribe();
+    channel.subscribe((status, details) => {
+      statusHandler.current?.(status, details);
+    });
     return () => {
       amSupabase.removeChannel(channel);
     };
-  }, [key, specsKey, enabled, handler]);
+  }, [key, specsKey, enabled, handler, statusHandler]);
 }
 
 /** Total unread messages across threads (for nav badges). */

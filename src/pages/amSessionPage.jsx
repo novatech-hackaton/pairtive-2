@@ -3,11 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { CircleDot, Loader2 } from 'lucide-react';
 import { useAmAuth } from '../lib/amAuth.jsx';
 import { amSupabase, amFriendlyError } from '../lib/amSupabase.js';
-import { amStopLocalStream } from '../lib/amMedia.js';
+import { amCanScreenShare, amStopLocalStream } from '../lib/amMedia.js';
 import { amDailyScreenSupported } from '../lib/amDaily.js';
 import { useAmDailyCall } from '../lib/amDailyCall.js';
 import { useAmChat } from '../lib/amChat.js';
-import { useAmIsDesktop } from '../lib/amHooks.js';
+import { useAmPostgresChanges } from '../lib/amRealtime.js';
+import { useAmInterval, useAmIsDesktop } from '../lib/amHooks.js';
 import { amCreateNotesSync, amPersistNotes } from '../lib/amNotesSync.js';
 import { amSubmitReport } from '../lib/amReporting.js';
 import { AmRecorder, amSaveRecording } from '../lib/amRecorder.js';
@@ -56,6 +57,31 @@ export default function AmSessionPage() {
 
   const chat = useAmChat({ memberIds: members.filter((m) => m.user_id !== user.id).map((m) => m.user_id), sessionId });
   const [unread, setUnread] = useState(0);
+
+  const refreshMembers = useCallback(async () => {
+    const { data: m, error: membersError } = await amSupabase.from('session_members').select('user_id, teach_subjects, learn_subjects').eq('session_id', sessionId);
+    if (membersError) throw membersError;
+    const ids = (m ?? []).map((x) => x.user_id);
+    const { data: profs, error: profilesError } = await amSupabase
+      .from('profiles')
+      .select('id, name, avatar_url')
+      .in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+    if (profilesError) throw profilesError;
+    const byId = Object.fromEntries((profs ?? []).map((p) => [p.id, p]));
+    setMembers((m ?? []).map((x) => ({ ...x, ...byId[x.user_id] })));
+  }, [sessionId]);
+
+  useAmPostgresChanges(
+    'session-members-' + sessionId,
+    [{ event: 'INSERT', table: 'session_members', filter: 'session_id=eq.' + sessionId }],
+    () => refreshMembers().catch((e) => amToast.error(amFriendlyError(e))),
+    !!sessionId,
+  );
+  const expectedMembers = session?.mode === 'peers' ? 3 : 2;
+  useAmInterval(
+    () => refreshMembers().catch(() => {}),
+    session && members.length < expectedMembers ? 4000 : null,
+  );
 
   // Load session + members, mark joined, set up notes sync.
   useEffect(() => {
@@ -246,13 +272,13 @@ export default function AmSessionPage() {
     );
   }
 
-  const chatPanel = <AmChatPanel messages={chat.messages} loading={chat.loading} members={members} selfId={user.id} onSend={chat.send} ready={chat.ready} />;
+  const chatPanel = <AmChatPanel messages={chat.messages} loading={chat.loading} members={members} selfId={user.id} onSend={chat.send} ready={chat.ready} error={chat.error} />;
   const notesPanel = (
     <AmNotesPanel value={notes} editorCount={call.participants.length} onChange={(v) => { setNotes(v); notesSyncRef.current?.setFromInput(v); }} />
   );
 
   return (
-    <div className="flex h-dvh flex-col bg-ink-950 p-3 sm:p-4">
+    <div className="flex h-dvh min-w-0 flex-col overflow-hidden bg-ink-950 p-3 sm:p-4">
       <header className="mb-3 flex items-center justify-between">
         <AmLogo withText={false} />
         <div className="flex items-center gap-2">
@@ -267,8 +293,8 @@ export default function AmSessionPage() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 gap-3">
-        <main className="min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 gap-3">
+        <main className="min-h-0 min-w-0 flex-1">
           {call.joined ? (
             <AmVideoGrid participants={call.participants} onReport={(p) => setReportTarget(members.find((m) => m.user_id === p.userId) || { user_id: p.userId, name: p.name })} />
           ) : (
@@ -284,13 +310,13 @@ export default function AmSessionPage() {
         ) : null}
       </div>
 
-      <footer className="mt-3 flex justify-center">
+      <footer className="mt-3 flex max-w-full justify-center">
         <AmControlsBar
           micOn={call.micOn}
           camOn={call.camOn}
           screenOn={call.screenOn}
           recording={recording}
-          canScreenShare={amDailyScreenSupported()}
+          canScreenShare={amCanScreenShare() && amDailyScreenSupported()}
           unread={unread}
           mode={session?.mode}
           onToggleMic={call.toggleMic}

@@ -66,7 +66,7 @@ export default function AmThreadPage() {
   const title = others.map((m) => m.name).join(', ');
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-7rem)] max-w-2xl flex-col md:h-[calc(100dvh-5rem)]">
+    <div className="mx-auto flex h-full min-h-0 min-w-0 max-w-2xl flex-col">
       <header className="mb-3 flex items-center gap-3">
         <AmIconButton icon={ArrowLeft} label="Back to messages" tone="ghost" size="sm" tooltip={false} onClick={() => navigate('/messages')} />
         {others.length > 1 ? <AmAvatarStack people={others} /> : <AmAvatar name={others[0]?.name ?? ''} src={others[0]?.avatar_url} />}
@@ -78,8 +78,8 @@ export default function AmThreadPage() {
         <AmButton size="sm" icon={PhoneCall} loading={reconnecting} onClick={reconnect}>Reconnect</AmButton>
       </header>
 
-      <div className="glass min-h-0 flex-1 overflow-hidden rounded-3xl">
-        <AmChatPanel messages={chat.messages} loading={chat.loading} members={members} selfId={user.id} onSend={chat.send} ready={chat.ready} />
+      <div className="glass min-h-0 min-w-0 flex-1 overflow-hidden rounded-3xl">
+        <AmChatPanel messages={chat.messages} loading={chat.loading} members={members} selfId={user.id} onSend={chat.send} ready={chat.ready} error={chat.error} />
       </div>
 
       <AmModal open={showNotes} onClose={() => setShowNotes(false)} title="Session notes" size="lg" icon={NotebookPen}>

@@ -3,6 +3,16 @@ import { amSupabase } from './amSupabase.js';
 import { amValidateAttachment, amSafeFileName } from '../../shared/amAttachments.js';
 import { useAmPostgresChanges } from './amRealtime.js';
 
+export function amMergeChatMessages(current, incoming) {
+  const merged = new Map();
+  for (const msg of [...(current ?? []), ...(Array.isArray(incoming) ? incoming : [incoming])]) {
+    if (!msg) continue;
+    const key = msg.id || `${msg.sender_id}:${msg.created_at}:${msg.body ?? ''}:${msg.attachment_path ?? ''}`;
+    merged.set(key, msg);
+  }
+  return [...merged.values()].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+}
+
 /**
  * Chat for a conversation. Pass conversationId for an existing thread, or
  * memberIds (the other participants) to resolve the thread eagerly so incoming
@@ -25,13 +35,19 @@ export function useAmChat({ conversationId: initialId, memberIds, sessionId }) {
 
   const load = useCallback(async (id) => {
     if (!id) return;
-    const { data } = await amSupabase
+    const { data, error: loadError } = await amSupabase
       .from('messages')
       .select('*')
       .eq('conversation_id', id)
       .order('created_at', { ascending: true })
       .limit(500);
-    setMessages(data ?? []);
+    if (loadError) {
+      setError(loadError.message || 'Could not load messages.');
+      setLoading(false);
+      return;
+    }
+    setMessages((current) => amMergeChatMessages(current, data ?? []));
+    setError(null);
     setLoading(false);
     amSupabase.from('conversation_members').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', id).then(() => {});
   }, []);
@@ -86,12 +102,17 @@ export function useAmChat({ conversationId: initialId, memberIds, sessionId }) {
     'chat',
     [{ event: 'INSERT', table: 'messages', filter: conversationId ? 'conversation_id=eq.' + conversationId : undefined }],
     ({ new: msg }) => {
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      setMessages((prev) => amMergeChatMessages(prev, msg));
       if (document.visibilityState === 'visible' && conversationId) {
         amSupabase.from('conversation_members').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', conversationId).then(() => {});
       }
     },
     !!conversationId,
+    (status, details) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        setError(details?.message || 'Live chat disconnected. Your messages are still saved.');
+      }
+    },
   );
 
   const ensureConversation = useCallback(async () => {
@@ -129,14 +150,17 @@ export function useAmChat({ conversationId: initialId, memberIds, sessionId }) {
         const path = await uploadAttachment(convId, file);
         attachment = { attachment_path: path, attachment_name: file.name.slice(0, 120), attachment_type: file.type, attachment_size: file.size };
       }
-      const { error } = await amSupabase.from('messages').insert({
+      const { data: authData, error: authError } = await amSupabase.auth.getUser();
+      if (authError || !authData?.user?.id) throw new Error(authError?.message || 'You need to sign in again.');
+      const { data: inserted, error } = await amSupabase.from('messages').insert({
         conversation_id: convId,
-        sender_id: (await amSupabase.auth.getUser()).data.user.id,
+        sender_id: authData.user.id,
         session_id: sessionId ?? null,
         body: text || null,
         ...attachment,
-      });
+      }).select('*').single();
       if (error) throw new Error(error.message);
+      if (inserted) setMessages((current) => amMergeChatMessages(current, inserted));
     },
     [ensureConversation, uploadAttachment, sessionId],
   );

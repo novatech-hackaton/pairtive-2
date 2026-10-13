@@ -33,7 +33,7 @@ function AmAttachment({ msg }) {
   );
 }
 
-export function AmChatPanel({ messages, loading, members, selfId, onSend, ready = true }) {
+export function AmChatPanel({ messages, loading, members, selfId, onSend, ready = true, error = null }) {
   const [text, setText] = useState('');
   const [file, setFile] = useState(null);
   const [sending, setSending] = useState(false);
@@ -66,8 +66,8 @@ export function AmChatPanel({ messages, loading, members, selfId, onSend, ready 
   const canSend = ready && !sending && (!!text.trim() || !!file);
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4">
         {loading ? (
           <p className="py-8 text-center text-sm text-slate-500">Loading messages…</p>
         ) : messages.length === 0 ? (
@@ -97,14 +97,15 @@ export function AmChatPanel({ messages, loading, members, selfId, onSend, ready 
       </div>
 
       {file ? (
-        <div className="mx-4 mb-2 flex items-center gap-2 rounded-xl bg-white/8 p-2 text-sm text-slate-200">
+        <div className="mx-4 mb-2 flex shrink-0 items-center gap-2 rounded-xl bg-white/8 p-2 text-sm text-slate-200">
           {amIsImageType(file.type) ? <ImageIcon className="size-4 text-brand-cyan" aria-hidden /> : <FileText className="size-4 text-brand-cyan" aria-hidden />}
           <span className="min-w-0 flex-1 truncate">{file.name}</span>
           <AmIconButton icon={X} label="Remove attachment" tone="ghost" size="sm" onClick={() => setFile(null)} />
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="flex items-center gap-2 border-t border-white/8 p-3">
+      {error ? <p className="shrink-0 px-4 pb-1 text-xs text-rose-300" role="status">{error}</p> : null}
+      <form onSubmit={submit} className="flex shrink-0 items-center gap-2 border-t border-white/8 p-3">
         <input
           ref={fileRef}
           type="file"
